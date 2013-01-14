@@ -1530,4 +1530,9 @@ public void catchException(
 		final Type exception){
 	mv.visitTryCatchBlock(start, end, mark(), exception.getInternalName());
 }
+public void catchExceptionAny(
+		final Label start,
+		final Label end){
+	mv.visitTryCatchBlock(start, end, mark(), null);
+}
 }

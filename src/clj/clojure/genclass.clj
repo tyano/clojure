@@ -287,15 +287,65 @@
         (. gen putStatic ctype (var-name v) var-type))
       
       (when load-impl-ns
-        (. gen push "clojure.core")
-        (. gen push "load")
-        (. gen (invokeStatic rt-type (. Method (getMethod "clojure.lang.Var var(String,String)"))))
-        (. gen push (str "/" impl-cname))
-        (. gen (invokeInterface ifn-type (new Method "invoke" obj-type (to-types [Object]))))
-;        (. gen push (str (.replace impl-pkg-name \- \_) "__init"))
-;        (. gen (invokeStatic class-type (. Method (getMethod "Class forName(String)"))))
-        (. gen pop))
+        (let [compiler-type (totype clojure.lang.Compiler)
+              ex-local (. gen (newLocal (totype Throwable)))
+              start-label (. gen newLabel)
+              end-label (. gen newLabel)
+              finally-start-label (. gen newLabel)
+              finally-end-label (. gen newLabel)
+              last-label (. gen newLabel)]
 
+          ;generate a new array object of size of 2.
+          (. gen push (int 2))
+          (. gen (newArray obj-type))
+
+          ;push Compiler.LOADER into an array at 0.
+          (. gen dup)
+          (. gen push (int 0))
+          (. gen (getStatic compiler-type "LOADER" var-type))
+          (. gen (arrayStore obj-type))
+
+          ;push CurrentClass.getClassLoader into an array at 1.
+          (. gen dup)
+          (. gen push (int 1))
+          (. gen push ctype)
+          (. gen (invokeVirtual class-type (. Method (getMethod "java.lang.ClassLoader getClassLoader()"))))
+          ;push an built array
+          (. gen (arrayStore obj-type))
+          
+          ;call pushThreadBindings with an array.
+          (. gen (invokeStatic rt-type (. Method (getMethod "clojure.lang.IPersistentMap map(Object[])"))))
+          (. gen (invokeStatic var-type (. Method (getMethod "void pushThreadBindings(clojure.lang.Associative)"))))
+
+          (. gen (mark start-label)) ;start try block
+
+          ;call clojure.core.load(class__init)
+          (. gen push "clojure.core")
+          (. gen push "load")
+          (. gen (invokeStatic rt-type (. Method (getMethod "clojure.lang.Var var(String,String)"))))
+          (. gen push (str "/" impl-cname))
+          (. gen (invokeInterface ifn-type (new Method "invoke" obj-type (to-types [Object]))))
+  ;        (. gen push (str (.replace impl-pkg-name \- \_) "__init"))
+  ;        (. gen (invokeStatic class-type (. Method (getMethod "Class forName(String)"))))
+          (. gen pop)
+
+          (. gen (mark end-label))
+
+          ;reset a classloader 
+          (. gen (invokeStatic var-type (. Method (getMethod "void popThreadBindings()"))))
+          (. gen (goTo last-label))
+
+          (. gen (catchExceptionAny start-label end-label))
+          (. gen (catchExceptionAny finally-start-label finally-end-label))
+          ;catch(Throwable) -- This exists for doing 'finally' block.
+          (. gen (mark finally-start-label))
+          (. gen (storeLocal ex-local))
+          (. gen (mark finally-end-label))
+          (. gen (invokeStatic var-type (. Method (getMethod "void popThreadBindings()"))))
+          (. gen (loadLocal ex-local))
+          (. gen throwException)
+          (. gen (mark last-label))))
+      
       (. gen (returnValue))
       (. gen (endMethod)))
     
