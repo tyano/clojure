@@ -125,12 +125,15 @@
   (validate-generate-class-options options-map)
   (let [default-options {:prefix "-" :load-impl-ns true :impl-ns (ns-name *ns*)}
         {:keys [name extends implements constructors methods main factory state init exposes 
-                exposes-methods prefix load-impl-ns impl-ns post-init]} 
+                exposes-methods prefix load-impl-ns impl-ns post-init serialversion]} 
           (merge default-options options-map)
         name-meta (meta name)
         name (str name)
         super (if extends (the-class extends) Object)
-        interfaces (map the-class implements)
+        ifs (map the-class implements)
+        interfaces (if (and serialversion (not (some #{java.io.Serializable} ifs)))
+                     (conj ifs java.io.Serializable)
+                     ifs)
         supers (cons super interfaces)
         ctor-sig-map (or constructors (zipmap (ctor-sigs super) (ctor-sigs super)))
         cv (new ClassWriter (. ClassWriter COMPUTE_MAXS))
@@ -260,6 +263,14 @@
 
                                         ; class annotations
     (add-annotations cv name-meta)
+
+                                        ;generate serialversionUID
+    (when serialversion
+      (. cv (visitField (+ (. Opcodes ACC_PRIVATE) (. Opcodes ACC_FINAL) (. Opcodes ACC_STATIC))
+                        "serialVersionUID"
+                        (. (totype Long/TYPE) getDescriptor)
+                        nil
+                        1)))
     
                                         ;static fields for vars
     (doseq [v var-fields]
