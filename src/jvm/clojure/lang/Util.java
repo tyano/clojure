@@ -19,6 +19,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.lang.ref.ReferenceQueue;
+import clojure.lang.IFn;
 
 public class Util{
 static public boolean equiv(Object k1, Object k2){
@@ -252,6 +253,12 @@ static public Object loadWithClass(String scriptbase, Class<?> loadFrom) throws 
     finally
     {
         Var.popThreadBindings();
+    }
+}
+
+static public Object withSynchronized(Object lock, IFn expr) {
+    synchronized(lock) {
+        return expr.invoke();
     }
 }
 
