@@ -23,7 +23,6 @@ import java.lang.invoke.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Modifier;
 import java.util.*;
-import java.util.function.LongFunction;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 
@@ -1448,7 +1447,7 @@ static abstract class MethodExpr extends HostExpr{
 
 				// if parameterTypes[i] is a functional interface (SAM object) and the argument (e) is a IFn,
 				// then emit invokeDynamic to create the SAM object with LambdaMetaFactory.
-				else if(LambdaExpr.isSamType(parameterTypes[i]) && e.hasJavaClass() && IFn.class.isAssignableFrom(e.getJavaClass()))
+				else if(e.hasJavaClass() && Reflector.canLambdaConversion(parameterTypes[i], e.getJavaClass()))
 					{
 					final LambdaExpr lambdaExpr = new LambdaExpr(parameterTypes[i], e);
 					lambdaExpr.emit(C.EXPRESSION, objx, gen);
@@ -1470,12 +1469,6 @@ static abstract class MethodExpr extends HostExpr{
 }
 
 static class LambdaExpr implements Expr {
-
-	private static List<java.lang.reflect.Method> objectMethods;
-
-	static {
-		objectMethods = Arrays.asList(Object.class.getDeclaredMethods());
-	}
 	public final String source;
 	public final int line;
 	public final int column;
@@ -1490,80 +1483,17 @@ static class LambdaExpr implements Expr {
 		this.fnExpr = fnExpr;
 	}
 
-	private static boolean isSameSignature(java.lang.reflect.Method m1, java.lang.reflect.Method m2) {
-		return Arrays.equals(m1.getParameterTypes(), m2.getParameterTypes()) &&
-				m1.getName().equals(m2.getName()) &&
-				m1.getReturnType().equals(m2.getReturnType());
-	}
-
-	private static boolean isSameSignatureWithObjectMethods(java.lang.reflect.Method method) {
-		return objectMethods.stream().anyMatch(objectMethod -> isSameSignature(objectMethod, method));
-	}
-
-	public static boolean isSamType(Class<?> type) {
-		if(type != null && type.isInterface()) {
-			return type.isAnnotationPresent(FunctionalInterface.class) ||
-					Arrays.stream(type.getMethods())
-							.filter(m -> Modifier.isAbstract(m.getModifiers()))
-							.filter(m -> !isSameSignatureWithObjectMethods(m))
-							.count() == 1L;
-		} else {
-			return false;
-		}
-	}
-
 	@Override
 	public Object eval() {
 		IFn clojureFunction = (IFn)fnExpr.eval();
 		Class<? extends Class> functionalInterface = parameterType.getClass();
-		Optional<java.lang.reflect.Method> samMethodOpt = Arrays.stream(functionalInterface.getMethods())
-				.filter(m -> Modifier.isAbstract(m.getModifiers()))
-				.filter(m -> !isSameSignatureWithObjectMethods(m))
-				.findFirst();
-
-		if(samMethodOpt.isPresent()) {
-			MethodHandles.Lookup lookup = MethodHandles.lookup();
-
-			java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
-			String interfaceMethodName = interfaceMethod.getName();
-
-			MethodType invokedType = MethodType.methodType(functionalInterface, IFn.class);
-			try {
-				MethodType samMethodType = lookup.unreflect(interfaceMethod).type();
-
-				int parameterCount = interfaceMethod.getParameterCount();
-				Class<?>[] parameters = new Class<?>[parameterCount];
-				Arrays.fill(parameters, Object.class);
-				MethodHandle implMethod = lookup.findVirtual(IFn.class, "invoke", MethodType.methodType(Object.class, parameters));
-
-				CallSite callSite = LambdaMetafactory.metafactory(
-						lookup,
-						interfaceMethodName,
-						invokedType,
-						samMethodType,
-						implMethod,
-						samMethodType);
-
-				MethodHandle target = callSite.getTarget().bindTo(clojureFunction);
-				return functionalInterface.cast(target.invokeExact());
-			} catch (Throwable e) {
-				if(!(e instanceof CompilerException))
-					throw new CompilerException(source, line, column, null, CompilerException.PHASE_EXECUTION, e);
-				else
-					throw (CompilerException) e;
-			}
-		} else {
-			return fnExpr.eval();
-		}
+		return Reflector.lambdaConversion(functionalInterface, clojureFunction);
 	}
 
 	@Override
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen) {
 		Class<? extends Class> functionalInterface = parameterType.getClass();
-		Optional<java.lang.reflect.Method> samMethodOpt = Arrays.stream(functionalInterface.getMethods())
-				.filter(m -> Modifier.isAbstract(m.getModifiers()))
-				.filter(m -> !isSameSignatureWithObjectMethods(m))
-				.findFirst();
+		Optional<java.lang.reflect.Method> samMethodOpt = Reflector.findSingleAbstractMethod(functionalInterface);
 
 		if(samMethodOpt.isPresent()) {
 			java.lang.reflect.Method interfaceMethod = samMethodOpt.get();

@@ -12,14 +12,13 @@
 
 package clojure.lang;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
+import java.lang.invoke.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.*;
+import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 public class Reflector{
@@ -40,6 +39,12 @@ static {
 		Util.sneakyThrow(t);
 	}
 	CAN_ACCESS_PRED = pred;
+}
+
+private static List<java.lang.reflect.Method> objectMethods;
+
+static {
+	objectMethods = Arrays.asList(Object.class.getDeclaredMethods());
 }
 
 private static boolean canAccess(Method m, Object target) {
@@ -129,7 +134,9 @@ static Object invokeMatchingMethod(String methodName, List methods, Object targe
 	else if(methods.size() == 1)
 		{
 		m = (Method) methods.get(0);
-		boxedArgs = boxArgs(m.getParameterTypes(), args);
+		Class[] params = m.getParameterTypes();
+		Object[] actualArgs = convertArgs(params, args);
+		boxedArgs = boxArgs(m.getParameterTypes(), actualArgs);
 		}
 	else //overloaded w/same arity
 		{
@@ -139,12 +146,13 @@ static Object invokeMatchingMethod(String methodName, List methods, Object targe
 			m = (Method) i.next();
 
 			Class[] params = m.getParameterTypes();
-			if(isCongruent(params, args))
+			Object[] actualArgs = convertArgs(params, args);
+			if(isCongruent(params, actualArgs))
 				{
 				if(foundm == null || Compiler.subsumes(params, foundm.getParameterTypes()))
 					{
 					foundm = m;
-					boxedArgs = boxArgs(params, args);
+					boxedArgs = boxArgs(params, actualArgs);
 					}
 				}
 			}
@@ -592,6 +600,8 @@ static public boolean paramArgTypeMatch(Class paramType, Class argType){
 		return !paramType.isPrimitive();
 	if(paramType == argType || paramType.isAssignableFrom(argType))
 		return true;
+	if(canLambdaConversion(paramType, argType))
+		return true;
 	if(paramType == int.class)
 		return argType == Integer.class
 		       || argType == long.class
@@ -618,6 +628,107 @@ static public boolean paramArgTypeMatch(Class paramType, Class argType){
 	else if(paramType == boolean.class)
 		return argType == Boolean.class;
 	return false;
+}
+
+private static boolean isSamType(Class<?> type) {
+	if(type != null && type.isInterface()) {
+		return type.isAnnotationPresent(FunctionalInterface.class) ||
+				Arrays.stream(type.getMethods())
+						.filter(m -> Modifier.isAbstract(m.getModifiers()))
+						.filter(m -> !Reflector.isSameSignatureWithObjectMethods(m))
+						.count() == 1L;
+	} else {
+		return false;
+	}
+}
+
+public static Optional<java.lang.reflect.Method> findSingleAbstractMethod(Class samType) {
+	return Arrays.stream(samType.getMethods())
+			.filter(m -> Modifier.isAbstract(m.getModifiers()))
+			.filter(m -> !isSameSignatureWithObjectMethods(m))
+			.findFirst();
+}
+
+public static boolean canLambdaConversion(Class paramType, Class argClass) {
+	if(paramType != null && argClass != null && IFn.class.isAssignableFrom(argClass)) {
+		if(Callable.class.isAssignableFrom(paramType) || Runnable.class.isAssignableFrom(paramType)) {
+			return false;
+		}
+		return isSamType(paramType);
+	}
+	return false;
+}
+
+private static boolean isSameSignature(java.lang.reflect.Method m1, java.lang.reflect.Method m2) {
+	return Arrays.equals(m1.getParameterTypes(), m2.getParameterTypes()) &&
+			m1.getName().equals(m2.getName()) &&
+			m1.getReturnType().equals(m2.getReturnType());
+}
+
+private static boolean isSameSignatureWithObjectMethods(java.lang.reflect.Method method) {
+	return objectMethods.stream().anyMatch(objectMethod -> isSameSignature(objectMethod, method));
+}
+
+public static Object lambdaConversion(Class functionalInterface, Object fn) {
+	IFn clojureFunction = (IFn)fn;
+	Optional<java.lang.reflect.Method> samMethodOpt = findSingleAbstractMethod(functionalInterface);
+
+	if(samMethodOpt.isPresent()) {
+		MethodHandles.Lookup lookup = MethodHandles.lookup();
+
+		java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
+		String interfaceMethodName = interfaceMethod.getName();
+
+		MethodType invokedType = MethodType.methodType(functionalInterface, IFn.class);
+		try {
+			MethodType samMethodType = MethodType.methodType(interfaceMethod.getReturnType(), interfaceMethod.getParameterTypes());
+
+			int parameterCount = interfaceMethod.getParameterCount();
+			Class[] parameters = new Class[parameterCount];
+			Arrays.fill(parameters, Object.class);
+			MethodHandle implMethod = lookup.findVirtual(IFn.class, "invoke", MethodType.methodType(Object.class, parameters));
+
+			System.out.println("lambda conversion: parameterCount = " + parameterCount + ", interface class = " + functionalInterface + ", interface method = " + samMethodType + ", implMethod = " + implMethod);
+			CallSite callSite = LambdaMetafactory.metafactory(
+					lookup,
+					interfaceMethodName,
+					invokedType,
+					samMethodType,
+					implMethod,
+					samMethodType);
+
+			MethodHandle target = callSite.getTarget().bindTo(clojureFunction);
+			return functionalInterface.cast(target.invoke());
+		} catch (Throwable e) {
+			if(!(e instanceof Compiler.CompilerException))
+				throw new Compiler.CompilerException("", 0, 0, null, Compiler.CompilerException.PHASE_EXECUTION, e);
+			else
+				throw (Compiler.CompilerException) e;
+		}
+	} else {
+		return fn;
+	}
+}
+
+private static Object[] convertArgs(Class[] parameterTypes, Object[] args) {
+	if(parameterTypes.length > 0 && parameterTypes.length == args.length) {
+		Object[] ret = new Object[args.length];
+		for(int i = 0; i < parameterTypes.length; i++) {
+			Object arg = args[i];
+			Class paramType = parameterTypes[i];
+
+			Class argType = (arg == null) ? null : arg.getClass();
+			if(canLambdaConversion(paramType, argType)) {
+				ret[i] = lambdaConversion(paramType, arg);
+				System.out.println("conversion: param = " + paramType + ", arg = " + (argType == null ? "null" : argType.getName()) + ", converted = " + ret[i]);
+			} else {
+				ret[i] = arg;
+			}
+		}
+		return ret;
+	} else {
+		return args;
+	}
 }
 
 static boolean isCongruent(Class[] params, Object[] args){
