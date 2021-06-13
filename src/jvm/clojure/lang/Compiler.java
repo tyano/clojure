@@ -1449,6 +1449,7 @@ static abstract class MethodExpr extends HostExpr{
 				// then emit invokeDynamic to create the SAM object with LambdaMetaFactory.
 				else if(e.hasJavaClass() && Reflector.canLambdaConversion(parameterTypes[i], e.getJavaClass()))
 					{
+						System.out.println("Can LambdaConversion: " + parameterTypes[i] + ", arg = " + e.getJavaClass());
 					final LambdaExpr lambdaExpr = new LambdaExpr(parameterTypes[i], e);
 					lambdaExpr.emit(C.EXPRESSION, objx, gen);
 					}
@@ -1486,20 +1487,20 @@ static class LambdaExpr implements Expr {
 	@Override
 	public Object eval() {
 		IFn clojureFunction = (IFn)fnExpr.eval();
-		Class<? extends Class> functionalInterface = parameterType.getClass();
-		return Reflector.lambdaConversion(functionalInterface, clojureFunction);
+		System.out.println("lambdaConversion is called. interface = " + parameterType + ", arg = " + fnExpr);
+		return Reflector.lambdaConversion(parameterType, clojureFunction);
 	}
 
 	@Override
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen) {
-		Class<? extends Class> functionalInterface = parameterType.getClass();
-		Optional<java.lang.reflect.Method> samMethodOpt = Reflector.findSingleAbstractMethod(functionalInterface);
+		Optional<java.lang.reflect.Method> samMethodOpt = Reflector.findSingleAbstractMethod(parameterType);
 
+		System.out.println("emiting lambda... interface = " + parameterType + ", samMethod = " + samMethodOpt);
 		if(samMethodOpt.isPresent()) {
 			java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
 			String interfaceMethodName = interfaceMethod.getName();
 
-			MethodType invokedType = MethodType.methodType(functionalInterface, /*IFnではないかもしれない*/IFn.class);
+			MethodType invokedType = MethodType.methodType(parameterType, /*IFnではないかもしれない*/IFn.class);
 			String callsiteMethodDescriptor = invokedType.toMethodDescriptorString();
 
 			MethodType bootstrapMethodType = MethodType.methodType(CallSite.class, MethodHandles.Lookup.class, String.class, MethodType.class, MethodType.class, MethodHandle.class, MethodType.class);
@@ -1507,14 +1508,21 @@ static class LambdaExpr implements Expr {
 
 			Type interfaceMethodType = Type.getType(interfaceMethod);
 
+			int parameterCount = interfaceMethod.getParameterCount();
+			Class[] parameters = new Class[parameterCount];
+			Arrays.fill(parameters, Object.class);
+
 			// primitive対応している場合、インタフェース型とメソッド名、引数の型が変わるので、正しい型を検索する必要がある
-			Handle implMethodHandle = new Handle(Opcodes.INVOKEVIRTUAL, IFn.class.getName().replace('.', '/'), "invoke", MethodType.methodType(Object.class, Object.class).toMethodDescriptorString(), true);
+			Handle implMethodHandle = new Handle(Opcodes.INVOKEVIRTUAL, IFn.class.getName().replace('.', '/'), "invoke", MethodType.methodType(Object.class, parameters).toMethodDescriptorString(), true);
 
 			// Put the IFn to the top of stack.
 			// It will be used as an argument for a LambdaMetaFactory call.
 			fnExpr.emit(C.EXPRESSION, objx, gen);
 			gen.checkCast(Type.getType(IFn.class));
 			gen.visitLineNumber(line, gen.mark());
+
+			System.out.println("interfaceMethodName = " + interfaceMethodName + ", callsiteMethodDescriptor = " + callsiteMethodDescriptor + ", metafactoryHandle = " + metaFactoryHandle + ", interfaceMethodType = " + interfaceMethodType + ", implMethodHandle = " + implMethodHandle);
+
 			gen.invokeDynamic(
 					interfaceMethodName,
 					callsiteMethodDescriptor,
@@ -1522,6 +1530,7 @@ static class LambdaExpr implements Expr {
 					interfaceMethodType,
 					implMethodHandle,
 					interfaceMethodType);
+			System.out.println("invokeDynamic is emitted. interface = " + parameterType + ", arg = " + fnExpr);
 		} else {
 			// Just emit the expression
 			fnExpr.emit(C.EXPRESSION, objx, gen);

@@ -650,11 +650,8 @@ public static Optional<java.lang.reflect.Method> findSingleAbstractMethod(Class 
 }
 
 public static boolean canLambdaConversion(Class paramType, Class argClass) {
-	if(paramType != null && argClass != null && IFn.class.isAssignableFrom(argClass)) {
-		if(Callable.class.isAssignableFrom(paramType) || Runnable.class.isAssignableFrom(paramType)) {
-			return false;
-		}
-		return isSamType(paramType);
+	if(paramType != null && argClass != null && IFn.class.isAssignableFrom(argClass) && isSamType(paramType)) {
+		return !paramType.isAssignableFrom(argClass);
 	}
 	return false;
 }
@@ -670,6 +667,7 @@ private static boolean isSameSignatureWithObjectMethods(java.lang.reflect.Method
 }
 
 public static Object lambdaConversion(Class functionalInterface, Object fn) {
+	System.out.println("lambdaConversion: functionalInterface = " + functionalInterface);
 	IFn clojureFunction = (IFn)fn;
 	Optional<java.lang.reflect.Method> samMethodOpt = findSingleAbstractMethod(functionalInterface);
 
