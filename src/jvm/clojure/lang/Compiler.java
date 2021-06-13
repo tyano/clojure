@@ -19,9 +19,11 @@ import clojure.asm.commons.GeneratorAdapter;
 import clojure.asm.commons.Method;
 
 import java.io.*;
+import java.lang.invoke.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Modifier;
 import java.util.*;
+import java.util.function.LongFunction;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 
@@ -1443,6 +1445,15 @@ static abstract class MethodExpr extends HostExpr{
 					pe.emitUnboxed(C.EXPRESSION, objx, gen);
 					gen.visitInsn(D2F);
 					}
+
+				// if parameterTypes[i] is a functional interface (SAM object) and the argument (e) is a IFn,
+				// then emit invokeDynamic to create the SAM object with LambdaMetaFactory.
+				else if(LambdaExpr.isSamType(parameterTypes[i]) && e.hasJavaClass() && IFn.class.isAssignableFrom(e.getJavaClass()))
+					{
+					final LambdaExpr lambdaExpr = new LambdaExpr(objx.line, parameterTypes[i], e);
+					lambdaExpr.emit(C.EXPRESSION, objx, gen);
+					}
+
 				else
 					{
 					e.emit(C.EXPRESSION, objx, gen);
@@ -1455,6 +1466,104 @@ static abstract class MethodExpr extends HostExpr{
 				}
 
 			}
+	}
+}
+
+static class LambdaExpr implements Expr {
+
+	private static List<java.lang.reflect.Method> objectMethods;
+
+	static {
+		objectMethods = Arrays.asList(Object.class.getDeclaredMethods());
+	}
+
+	public final int line;
+	public final Class<?> parameterType;
+	public final Expr fnExpr;
+
+	public LambdaExpr(int line, Class<?> parameterType, Expr fnExpr) {
+		this.line = line;
+		this.parameterType = parameterType;
+		this.fnExpr = fnExpr;
+	}
+
+	private static boolean isSameSignature(java.lang.reflect.Method m1, java.lang.reflect.Method m2) {
+		return Arrays.equals(m1.getParameterTypes(), m2.getParameterTypes()) &&
+				m1.getName().equals(m2.getName()) &&
+				m1.getReturnType().equals(m2.getReturnType());
+	}
+
+	private static boolean isSameSignatureWithObjectMethods(java.lang.reflect.Method method) {
+		return objectMethods.stream().anyMatch(objectMethod -> isSameSignature(objectMethod, method));
+	}
+
+	public static boolean isSamType(Class<?> type) {
+		if(type != null && type.isInterface()) {
+			return type.isAnnotationPresent(FunctionalInterface.class) ||
+					Arrays.stream(type.getMethods())
+							.filter(m -> Modifier.isAbstract(m.getModifiers()))
+							.filter(m -> !isSameSignatureWithObjectMethods(m))
+							.count() == 1L;
+		} else {
+			return false;
+		}
+	}
+
+	@Override
+	public Object eval() {
+		return fnExpr.eval();
+	}
+
+	@Override
+	public void emit(C context, ObjExpr objx, GeneratorAdapter gen) {
+		Class<? extends Class> functionalInterface = parameterType.getClass();
+		Optional<java.lang.reflect.Method> samMethodOpt = Arrays.stream(functionalInterface.getMethods())
+				.filter(m -> Modifier.isAbstract(m.getModifiers()))
+				.filter(m -> !isSameSignatureWithObjectMethods(m))
+				.findFirst();
+
+		if(samMethodOpt.isPresent()) {
+			java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
+			String interfaceMethodName = interfaceMethod.getName();
+
+			MethodType invokedType = MethodType.methodType(functionalInterface, /*IFnではないかもしれない*/IFn.class);
+			String callsiteMethodDescriptor = invokedType.toMethodDescriptorString();
+
+			MethodType bootstrapMethodType = MethodType.methodType(CallSite.class, MethodHandles.Lookup.class, String.class, MethodType.class, MethodType.class, MethodHandle.class, MethodType.class);
+			Handle metaFactoryHandle = new Handle(Opcodes.INVOKESTATIC, LambdaMetafactory.class.getName().replace('.', '/'), "metaFactory", bootstrapMethodType.toMethodDescriptorString(), false);
+
+			Type interfaceMethodType = Type.getType(interfaceMethod);
+
+			// primitive対応している場合、インタフェース型とメソッド名、引数の型が変わるので、正しい型を検索する必要がある
+			Handle implMethodHandle = new Handle(Opcodes.INVOKEVIRTUAL, IFn.class.getName().replace('.', '/'), "invoke", MethodType.methodType(Object.class, Object.class).toMethodDescriptorString(), true);
+
+			// Put the IFn to the top of stack.
+			// It will be used as an argument for a LambdaMetaFactory call.
+			fnExpr.emit(C.EXPRESSION, objx, gen);
+			gen.checkCast(Type.getType(IFn.class));
+			gen.visitLineNumber(line, gen.mark());
+			gen.invokeDynamic(
+					interfaceMethodName,
+					callsiteMethodDescriptor,
+					metaFactoryHandle,
+					interfaceMethodType,
+					implMethodHandle,
+					interfaceMethodType);
+		} else {
+			// Just emit the expression
+			fnExpr.emit(C.EXPRESSION, objx, gen);
+			HostExpr.emitUnboxArg(objx, gen, parameterType);
+		}
+	}
+
+	@Override
+	public boolean hasJavaClass() {
+		return true;
+	}
+
+	@Override
+	public Class getJavaClass() {
+		return parameterType.getClass();
 	}
 }
 
