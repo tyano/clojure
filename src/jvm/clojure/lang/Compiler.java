@@ -1450,7 +1450,7 @@ static abstract class MethodExpr extends HostExpr{
 				// then emit invokeDynamic to create the SAM object with LambdaMetaFactory.
 				else if(LambdaExpr.isSamType(parameterTypes[i]) && e.hasJavaClass() && IFn.class.isAssignableFrom(e.getJavaClass()))
 					{
-					final LambdaExpr lambdaExpr = new LambdaExpr(objx.line, parameterTypes[i], e);
+					final LambdaExpr lambdaExpr = new LambdaExpr(parameterTypes[i], e);
 					lambdaExpr.emit(C.EXPRESSION, objx, gen);
 					}
 
@@ -1476,13 +1476,16 @@ static class LambdaExpr implements Expr {
 	static {
 		objectMethods = Arrays.asList(Object.class.getDeclaredMethods());
 	}
-
+	public final String source;
 	public final int line;
+	public final int column;
 	public final Class<?> parameterType;
 	public final Expr fnExpr;
 
-	public LambdaExpr(int line, Class<?> parameterType, Expr fnExpr) {
-		this.line = line;
+	public LambdaExpr(Class<?> parameterType, Expr fnExpr) {
+		this.source = (String)SOURCE.deref();
+		this.line = lineDeref();
+		this.column = columnDeref();
 		this.parameterType = parameterType;
 		this.fnExpr = fnExpr;
 	}
@@ -1511,7 +1514,47 @@ static class LambdaExpr implements Expr {
 
 	@Override
 	public Object eval() {
-		return fnExpr.eval();
+		IFn clojureFunction = (IFn)fnExpr.eval();
+		Class<? extends Class> functionalInterface = parameterType.getClass();
+		Optional<java.lang.reflect.Method> samMethodOpt = Arrays.stream(functionalInterface.getMethods())
+				.filter(m -> Modifier.isAbstract(m.getModifiers()))
+				.filter(m -> !isSameSignatureWithObjectMethods(m))
+				.findFirst();
+
+		if(samMethodOpt.isPresent()) {
+			MethodHandles.Lookup lookup = MethodHandles.lookup();
+
+			java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
+			String interfaceMethodName = interfaceMethod.getName();
+
+			MethodType invokedType = MethodType.methodType(functionalInterface, IFn.class);
+			try {
+				MethodType samMethodType = lookup.unreflect(interfaceMethod).type();
+
+				int parameterCount = interfaceMethod.getParameterCount();
+				Class<?>[] parameters = new Class<?>[parameterCount];
+				Arrays.fill(parameters, Object.class);
+				MethodHandle implMethod = lookup.findVirtual(IFn.class, "invoke", MethodType.methodType(Object.class, parameters));
+
+				CallSite callSite = LambdaMetafactory.metafactory(
+						lookup,
+						interfaceMethodName,
+						invokedType,
+						samMethodType,
+						implMethod,
+						samMethodType);
+
+				MethodHandle target = callSite.getTarget().bindTo(clojureFunction);
+				return functionalInterface.cast(target.invokeExact());
+			} catch (Throwable e) {
+				if(!(e instanceof CompilerException))
+					throw new CompilerException(source, line, column, null, CompilerException.PHASE_EXECUTION, e);
+				else
+					throw (CompilerException) e;
+			}
+		} else {
+			return fnExpr.eval();
+		}
 	}
 
 	@Override
