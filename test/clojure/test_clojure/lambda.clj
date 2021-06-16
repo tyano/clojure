@@ -6,7 +6,7 @@
            [java.util.function BiFunction Function Supplier]
            [java.util Iterator]
            [java.util.concurrent Callable]
-           [clojure.lang Reflector IFn APersistentMap ISeq]
+           [clojure.lang Reflector IFn APersistentMap ISeq ExprAccessor]
            [lambda LambdaTestFns SamInterfaceWithoutAnnotation SamInterfaceWithObjectsMethods 
             NotSamInterfaceWithEquals NotSamInterfaceWithHashcode NotSamInterfaceWithToString]))
 
@@ -34,27 +34,25 @@
 
     ;; A interface with many methods that have only one method without methods of same signature with Object class is a SAM type.
     (is (true? (Reflector/canLambdaConversion SamInterfaceWithObjectsMethods IFn)))
-    
+
     ;; Runnable and Callable are FunctionalInterfaces but IFn already implements them.
-    (is (false? (Reflector/canLambdaConversion Callable IFn))) 
+    (is (false? (Reflector/canLambdaConversion Callable IFn)))
     (is (false? (Reflector/canLambdaConversion Runnable IFn)))
-    
+
     ;; Interfaces with a one method but it have same signature with Object's methods are not SAM type.
     (is (false? (Reflector/canLambdaConversion NotSamInterfaceWithEquals IFn)))
     (is (false? (Reflector/canLambdaConversion NotSamInterfaceWithHashcode IFn)))
-    (is (false? (Reflector/canLambdaConversion NotSamInterfaceWithToString IFn)))
+    (is (false? (Reflector/canLambdaConversion NotSamInterfaceWithToString IFn))))
 
-    )
-  
   (testing "findSingleAbstractMethod"
     (let [method (.get (Reflector/findSingleAbstractMethod SamInterfaceWithObjectsMethods))]
       (is (= "sample" (.getName method)))
       (is (= "int" (.getName (.getReturnType method)))))
-    
-    (is (thrown-with-msg? IllegalArgumentException 
-                          #".* is not a SAM type." 
+
+    (is (thrown-with-msg? IllegalArgumentException
+                          #".* is not a SAM type."
                           (Reflector/findSingleAbstractMethod Iterator))))
-  
+
   (testing "convertArgs"
     (let [parameters (into-array Class [String Function Long])
           args       (into-array Object ["test" (fn [arg1] (.toUpperCase arg1)) (Long/valueOf 9)])
@@ -64,6 +62,19 @@
       (is (instance? Long (nth converted 2)))
       (is (= "test" (first converted)))
       (is (= (Long/valueOf 9) (nth converted 2)))
-      (is (= "TESTVALUE" (.apply (second converted) "testvalue")))))
-  )
-    
+      (is (= "TESTVALUE" (.apply (second converted) "testvalue"))))))
+
+(deftest test-clj-eval
+  (is (= ["A"]
+         (eval (read-string "(do (import '[java.util.stream Stream Collectors])
+                                 (.. (Stream/of \"a\")
+                                     (map (fn [item] (.toUpperCase item)))
+                                     (collect (Collectors/toList))))")))))
+
+(deftest test-lambdaexpr-eval
+  (let [fndata (read-string "(fn [value] (.toUpperCase value))")
+        lambda (.call (ExprAccessor/lambdaExpr Function fndata))]
+    (is (= ["A"]
+           (.. (Stream/of "a")
+               (map lambda)
+               (collect (Collectors/toList)))))))
