@@ -633,23 +633,19 @@ static public boolean paramArgTypeMatch(Class paramType, Class argType){
 	return false;
 }
 
-private static boolean isSamType(Class<?> type) {
-	if(type != null && type.isInterface()) {
-		return type.isAnnotationPresent(FunctionalInterface.class) ||
-				Arrays.stream(type.getMethods())
-						.filter(m -> Modifier.isAbstract(m.getModifiers()))
-						.filter(m -> !Reflector.isSameSignatureWithObjectMethods(m))
-						.count() == 1L;
-	} else {
-		return false;
-	}
+private static Stream<Method> samTargetMethods(Class type) {
+	return Arrays.stream(type.getMethods())
+			.filter(m -> Modifier.isAbstract(m.getModifiers()))
+			.filter(m -> !isSameSignatureWithObjectMethods(m));
 }
 
-public static Optional<java.lang.reflect.Method> findSingleAbstractMethod(Class samType) {
-	return Arrays.stream(samType.getMethods())
-			.filter(m -> Modifier.isAbstract(m.getModifiers()))
-			.filter(m -> !isSameSignatureWithObjectMethods(m))
-			.findFirst();
+private static boolean isSamType(Class type) {
+	return type != null && type.isInterface() &&
+			(type.isAnnotationPresent(FunctionalInterface.class) || samTargetMethods(type).count() == 1L);
+}
+
+public static Optional<Method> findSingleAbstractMethod(Class samType) {
+	return samTargetMethods(samType).findFirst();
 }
 
 public static boolean canLambdaConversion(Class paramType, Class argClass) {
@@ -659,24 +655,24 @@ public static boolean canLambdaConversion(Class paramType, Class argClass) {
 	return false;
 }
 
-private static boolean isSameSignature(java.lang.reflect.Method m1, java.lang.reflect.Method m2) {
+private static boolean isSameSignature(Method m1, Method m2) {
 	return Arrays.equals(m1.getParameterTypes(), m2.getParameterTypes()) &&
 			m1.getName().equals(m2.getName()) &&
 			m1.getReturnType().equals(m2.getReturnType());
 }
 
-private static boolean isSameSignatureWithObjectMethods(java.lang.reflect.Method method) {
+private static boolean isSameSignatureWithObjectMethods(Method method) {
 	return objectMethods.stream().anyMatch(objectMethod -> isSameSignature(objectMethod, method));
 }
 
 public static Object lambdaConversion(Class functionalInterface, Object fn) {
 	IFn clojureFunction = (IFn)fn;
-	Optional<java.lang.reflect.Method> samMethodOpt = findSingleAbstractMethod(functionalInterface);
+	Optional<Method> samMethodOpt = findSingleAbstractMethod(functionalInterface);
 
 	if(samMethodOpt.isPresent()) {
 		MethodHandles.Lookup lookup = MethodHandles.lookup();
 
-		java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
+		Method interfaceMethod = samMethodOpt.get();
 		String interfaceMethodName = interfaceMethod.getName();
 
 		MethodType invokedType = MethodType.methodType(functionalInterface, IFn.class);
