@@ -49,7 +49,11 @@
   (testing "findSingleAbstractMethod"
     (let [method (.get (Reflector/findSingleAbstractMethod SamInterfaceWithObjectsMethods))]
       (is (= "sample" (.getName method)))
-      (is (= "int" (.getName (.getReturnType method))))))
+      (is (= "int" (.getName (.getReturnType method)))))
+    
+    (is (thrown-with-msg? IllegalArgumentException 
+                          #".* is not a SAM type." 
+                          (Reflector/findSingleAbstractMethod Iterator))))
   
   (testing "convertArgs"
     (let [parameters (into-array Class [String Function Long])
