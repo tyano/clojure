@@ -18,8 +18,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.*;
-import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class Reflector{
 
@@ -41,10 +41,13 @@ static {
 	CAN_ACCESS_PRED = pred;
 }
 
-private static List<java.lang.reflect.Method> objectMethods;
+// public methods in Object class
+private static List<Method> objectMethods;
 
 static {
-	objectMethods = Arrays.asList(Object.class.getDeclaredMethods());
+	objectMethods = Arrays.stream(Object.class.getDeclaredMethods())
+			.filter(m -> Modifier.isPublic(m.getModifiers()))
+			.collect(Collectors.toList());
 }
 
 private static boolean canAccess(Method m, Object target) {
