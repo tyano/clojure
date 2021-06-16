@@ -21,7 +21,7 @@
                (map (fn [item] (.toUpperCase item)))
                (collect (Collectors/toList))))))
   
-  (testing "Generate a function type which have primitive parameter"
+  (testing "Generate a FunctionalInterface which have a primitive return type"
     (let [result (.. ["1" "2"]
                      (stream)
                      (mapToInt (fn [v] (Integer/parseInt ^String v)))
