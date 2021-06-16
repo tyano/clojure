@@ -1,4 +1,4 @@
-package clojure.test;
+package lambda;
 
 import java.util.function.Predicate;
 

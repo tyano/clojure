@@ -645,6 +645,9 @@ private static boolean isSamType(Class type) {
 }
 
 public static Optional<Method> findSingleAbstractMethod(Class samType) {
+	if(!isSamType(samType)) {
+		throw new IllegalArgumentException(samType.getName() + " is not a SAM type.");
+	}
 	return samTargetMethods(samType).findFirst();
 }
 
@@ -705,7 +708,7 @@ public static Object lambdaConversion(Class functionalInterface, Object fn) {
 	}
 }
 
-private static Object[] convertArgs(Class[] parameterTypes, Object[] args) {
+public static Object[] convertArgs(Class[] parameterTypes, Object[] args) {
 	if(parameterTypes.length > 0 && parameterTypes.length == args.length) {
 		Object[] ret = new Object[args.length];
 		for(int i = 0; i < parameterTypes.length; i++) {
