@@ -1,14 +1,26 @@
 (ns clojure.test-clojure.lambda
   (:use clojure.test)
+  (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string :refer [starts-with?]])
   (:import [java.util.stream Stream Collectors]
            [clojure.lang IFn]
-           [java.util.function Function]))
+           [clojure.test LambdaTestFns]))
 
 (deftest test-lambda-conversion
-  (is (= ["A"]
-         (.. (Stream/of "a")
-             (map (fn [item] (.toUpperCase item)))
-             ;;(map (reify Function (apply [this v] (.toUpperCase v))))
-             (collect (Collectors/toList))
+  (testing "Calling a static method which have a FunctionalInterface parameter"
+      (is (= "Yes"
+             (LambdaTestFns/test (fn [value] (starts-with? value "s")) "start")
+          )
+      )
+  )
+
+  (testing "Calling a instance method which have a FunctionalInterface parameter with dot macro"
+      (is (= ["A"]
+             (.. (Stream/of "a")
+                 (map (fn [item] (.toUpperCase item)))
+                 (collect (Collectors/toList))
              )
-           )))
+           )
+       )
+  )
+)

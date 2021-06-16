@@ -667,7 +667,6 @@ private static boolean isSameSignatureWithObjectMethods(java.lang.reflect.Method
 }
 
 public static Object lambdaConversion(Class functionalInterface, Object fn) {
-	System.out.println("lambdaConversion: functionalInterface = " + functionalInterface);
 	IFn clojureFunction = (IFn)fn;
 	Optional<java.lang.reflect.Method> samMethodOpt = findSingleAbstractMethod(functionalInterface);
 
@@ -686,7 +685,6 @@ public static Object lambdaConversion(Class functionalInterface, Object fn) {
 			Arrays.fill(parameters, Object.class);
 			MethodHandle implMethod = lookup.findVirtual(IFn.class, "invoke", MethodType.methodType(Object.class, parameters));
 
-			System.out.println("lambda conversion: parameterCount = " + parameterCount + ", interface class = " + functionalInterface + ", interface method = " + samMethodType + ", implMethod = " + implMethod);
 			CallSite callSite = LambdaMetafactory.metafactory(
 					lookup,
 					interfaceMethodName,
@@ -718,7 +716,7 @@ private static Object[] convertArgs(Class[] parameterTypes, Object[] args) {
 			Class argType = (arg == null) ? null : arg.getClass();
 			if(canLambdaConversion(paramType, argType)) {
 				ret[i] = lambdaConversion(paramType, arg);
-				System.out.println("conversion: param = " + paramType + ", arg = " + (argType == null ? "null" : argType.getName()) + ", converted = " + ret[i]);
+//				System.out.println("conversion: param = " + paramType + ", arg = " + (argType == null ? "null" : argType.getName()) + ", converted = " + ret[i]);
 			} else {
 				ret[i] = arg;
 			}
