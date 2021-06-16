@@ -2,7 +2,7 @@
   (:use clojure.test)
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :refer [starts-with?]])
-  (:import [java.util.stream Stream Collectors]
+  (:import [java.util.stream Stream Collectors IntStream LongStream]
            [java.util.function BiFunction Function Supplier]
            [java.util Iterator]
            [java.util.concurrent Callable]
@@ -20,6 +20,24 @@
            (.. (Stream/of "a")
                (map (fn [item] (.toUpperCase item)))
                (collect (Collectors/toList))))))
+  
+  (testing "Generate a function type which have primitive parameter"
+    (let [result (.. ["1" "2"]
+                     (stream)
+                     (mapToInt (fn [v] (Integer/parseInt ^String v)))
+                     (toArray))]
+      (is (= 2 (alength result)))
+      (is (= 1 (aget result 0)))
+      (is (= 2 (aget result 1)))))
+  
+  (testing "Can IFn handle primitive stream like IntStream"
+    (let [result (.. (IntStream/of (int-array [1 2 3]))
+                     (map (fn [value] (* value 2)))
+                     (toArray))]
+      (is (= (Class/forName "[I") (class result)))
+      (is (= 2 (aget result 0)))
+      (is (= 4 (aget result 1)))
+      (is (= 6 (aget result 2)))))
 
   (testing "can convert a fn to a FunctionalInterface by Reflector/lambdaConversion"
     (is (instance? BiFunction (Reflector/lambdaConversion BiFunction (fn [a b] (+ a b)))))))
