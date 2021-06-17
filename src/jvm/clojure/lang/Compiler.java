@@ -1615,9 +1615,8 @@ static class LambdaExpr implements Expr {
 					interfaceMethodType);
 			HostExpr.emitUnboxArg(objx, gen, parameterType);
 		} else {
-			// Just emit the expression
-			fnExpr.emit(C.EXPRESSION, objx, gen);
-			HostExpr.emitUnboxArg(objx, gen, parameterType);
+			// Must not be occurred, because this checking is already done before creating a LambdaExpr.
+			throw new CompilerException(source, line, column, null, CompilerException.PHASE_COMPILATION, new IllegalArgumentException("No Single Abstract Method is found in the class " + parameterType.getName()));
 		}
 	}
 
