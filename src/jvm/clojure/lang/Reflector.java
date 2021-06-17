@@ -673,7 +673,6 @@ private static boolean isSameSignatureWithObjectMethods(Method method) {
 }
 
 public static Object lambdaConversion(Class functionalInterface, Object fn) {
-	IFn clojureFunction = (IFn)fn;
 	Optional<Method> samMethodOpt = findSingleAbstractMethod(functionalInterface);
 
 	if(samMethodOpt.isPresent()) {
@@ -682,14 +681,48 @@ public static Object lambdaConversion(Class functionalInterface, Object fn) {
 		Method interfaceMethod = samMethodOpt.get();
 		String interfaceMethodName = interfaceMethod.getName();
 
-		MethodType invokedType = MethodType.methodType(functionalInterface, IFn.class);
 		try {
 			MethodType samMethodType = MethodType.methodType(interfaceMethod.getReturnType(), interfaceMethod.getParameterTypes());
 
 			int parameterCount = interfaceMethod.getParameterCount();
+
+			Class[] parameterTypes = interfaceMethod.getParameterTypes();
+			String primInterface = Compiler.LambdaExpr.maybePrimInterface(functionalInterface, interfaceMethod);
+
+			Class targetFnInterface = null;
+			String targetFnMethodName = null;
 			Class[] parameters = new Class[parameterCount];
-			Arrays.fill(parameters, Object.class);
-			MethodHandle implMethod = lookup.findVirtual(IFn.class, "invoke", MethodType.methodType(Object.class, parameters));
+			Class targetFnReturnType = Object.class;
+
+			if(primInterface != null) {
+				Class primInterfaceClass = Class.forName(primInterface);
+				if(primInterfaceClass.isAssignableFrom(fn.getClass())) {
+					targetFnInterface = primInterfaceClass;
+					targetFnMethodName = "invokePrim";
+					for(int i = 0; i < parameterCount; i++) {
+						Class parameter = parameterTypes[i];
+						if(parameter == long.class || parameter == double.class) {
+							parameters[i] = parameter;
+						} else {
+							parameters[i] = Object.class;
+						}
+					}
+					Class returnType = interfaceMethod.getReturnType();
+					if(returnType == long.class || returnType == double.class) {
+						targetFnReturnType = returnType;
+					}
+				}
+			}
+
+			if(targetFnInterface == null) {
+				// No invokePrim found. Use IFn.invoke instead.
+				targetFnInterface = IFn.class;
+				targetFnMethodName = "invoke";
+				Arrays.fill(parameters, Object.class);
+			}
+
+			MethodType invokedType = MethodType.methodType(functionalInterface, targetFnInterface);
+			MethodHandle implMethod = lookup.findVirtual(targetFnInterface, targetFnMethodName, MethodType.methodType(targetFnReturnType, parameters));
 
 			CallSite callSite = LambdaMetafactory.metafactory(
 					lookup,
@@ -699,7 +732,7 @@ public static Object lambdaConversion(Class functionalInterface, Object fn) {
 					implMethod,
 					samMethodType);
 
-			MethodHandle target = callSite.getTarget().bindTo(clojureFunction);
+			MethodHandle target = callSite.getTarget().bindTo(targetFnInterface.cast(fn));
 			return functionalInterface.cast(target.invoke());
 		} catch (Throwable e) {
 			if(!(e instanceof Compiler.CompilerException))

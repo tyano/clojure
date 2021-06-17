@@ -3,7 +3,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :refer [starts-with?]])
   (:import [java.util.stream Stream Collectors IntStream LongStream]
-           [java.util.function BiFunction Function Supplier]
+           [java.util.function BiFunction Function Supplier LongUnaryOperator]
            [java.util Iterator]
            [java.util.concurrent Callable]
            [clojure.lang Reflector IFn APersistentMap ISeq ExprAccessor]
@@ -72,7 +72,27 @@
       (is (< time1 time2))))
 
   (testing "can convert a fn to a FunctionalInterface by Reflector/lambdaConversion"
-    (is (instance? BiFunction (Reflector/lambdaConversion BiFunction (fn [a b] (+ a b)))))))
+    (is (instance? BiFunction (Reflector/lambdaConversion BiFunction (fn [a b] (+ a b))))))
+  
+  (testing "The functionalInterface made of Reflector/lambdaConversion works well"
+    (let [f      (Reflector/lambdaConversion LongUnaryOperator (fn [value] (* value 2)))
+          result (.. (LongStream/of (long-array [1]))
+                     (map f)
+                     (toArray))]
+      (is (= (Class/forName "[J") (class result)))
+      (is (= 2 (aget result 0)))))
+  
+  (testing "Also Reflector/lambdaConversion use invokePrim instead of invoke if a IFn implements a correct primitive interface"
+    (let [type-result (atom nil)
+          f      (Reflector/lambdaConversion LongUnaryOperator (fn ^long [^long value]
+                                                                 (let [stacktrace-element (first (.getStackTrace ^Throwable (ex-info "dummy" {})))]
+                                                                   (reset! type-result (.getMethodName stacktrace-element)))
+                                                                 (* value 2)))
+          result (.. (LongStream/of (long-array [1]))
+                     (map f)
+                     (toArray))]
+      
+      (is (= "invokePrim" @type-result)))))
 
 (deftest test-reflector-functions-for-lambda
   (testing "canLambdaConversion"

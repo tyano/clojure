@@ -1477,10 +1477,10 @@ static class LambdaExpr implements Expr {
 	public final String source;
 	public final int line;
 	public final int column;
-	public final Class<?> parameterType;
+	public final Class parameterType;
 	public final Expr fnExpr;
 
-	public LambdaExpr(Class<?> parameterType, Expr fnExpr) {
+	public LambdaExpr(Class parameterType, Expr fnExpr) {
 		this.source = (String)SOURCE.deref();
 		this.line = lineDeref();
 		this.column = columnDeref();
@@ -1550,7 +1550,7 @@ static class LambdaExpr implements Expr {
 
 			Type interfaceMethodType = Type.getType(interfaceMethod);
 
-			Class<?>[] parameterTypes = interfaceMethod.getParameterTypes();
+			Class[] parameterTypes = interfaceMethod.getParameterTypes();
 			String primInterface = maybePrimInterface(parameterType, interfaceMethod);
 
 			Class targetFnInterface = null;
@@ -1577,7 +1577,7 @@ static class LambdaExpr implements Expr {
 								parameters[i] = Object.class;
 							}
 						}
-						Class<?> returnType = interfaceMethod.getReturnType();
+						Class returnType = interfaceMethod.getReturnType();
 						if(returnType == long.class || returnType == double.class) {
 							targetFnReturnType = returnType;
 						}
