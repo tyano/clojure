@@ -38,6 +38,38 @@
       (is (= 2 (aget result 0)))
       (is (= 4 (aget result 1)))
       (is (= 6 (aget result 2)))))
+  
+  (testing "invokePrim must be used on a fn with correct type-hints instead of IFn.invoke"
+    (let [type-result (atom nil)
+          result (.. (LongStream/of (long-array [1]))
+                     ;; LongUnaryOperator#applyAsLong: (long) -> long. 
+                     ;; If fn is type-hinted as (long) -> long, invokePrim must be called instead of invoke.
+                     (map (fn ^long [^long value]
+                            (let [stacktrace-element (first (.getStackTrace ^Throwable (ex-info "dummy" {})))]
+                              (reset! type-result (.getMethodName stacktrace-element)))
+                            (* value 2)))
+                     (toArray))]
+      
+      (is (= (Class/forName "[J") (class result)))
+      (is (= 2 (aget result 0)))
+      
+      (is (= "invokePrim" @type-result))))
+  
+  (testing "invokePrim is faster than IFn.invoke"
+    (let [start1  (System/currentTimeMillis)
+          result1 (.. (LongStream/of (long-array (range 0 10000000)))
+                      (map (fn ^long [^long value] (* value 2)))
+                      (toArray))
+          end1    (System/currentTimeMillis)
+          result2 (.. (LongStream/of (long-array (range 0 10000000)))
+                      (map (fn [value] (* value 2)))
+                      (toArray))
+          end2    (System/currentTimeMillis)
+          time1   (- end1 start1)
+          time2   (- end2 end1)]
+
+      (println (str "time1 = " time1 "ms. time2 = " time2 "ms."))
+      (is (< time1 time2))))
 
   (testing "can convert a fn to a FunctionalInterface by Reflector/lambdaConversion"
     (is (instance? BiFunction (Reflector/lambdaConversion BiFunction (fn [a b] (+ a b)))))))

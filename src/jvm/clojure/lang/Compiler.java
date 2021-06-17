@@ -1494,6 +1494,49 @@ static class LambdaExpr implements Expr {
 		return Reflector.lambdaConversion(parameterType, clojureFunction);
 	}
 
+	static public String classCharAsString(Class c){
+		if(c == null || !c.isPrimitive())
+			return "O";
+		if(c == long.class)
+			return "L";
+		if(c == double.class)
+			return "D";
+
+		return null;
+	}
+
+	static public String maybePrimInterface(Class type,  java.lang.reflect.Method method) {
+		Class[] parameterTypes = method.getParameterTypes();
+		Class returnType = method.getReturnType();
+
+		StringBuilder sb = new StringBuilder();
+		for(Class paramType : parameterTypes) {
+			String classChar = classCharAsString(paramType);
+			if(classChar == null) {
+				// Not primitive interface
+				return null;
+			} else {
+				sb.append(classChar);
+			}
+		}
+		String classChar = classCharAsString(returnType);
+		if(classChar == null) {
+			return null;
+		} else {
+			sb.append(classChar);
+		}
+
+		String ret = sb.toString();
+		boolean prim = ret.contains("L") || ret.contains("D");
+		if(prim && parameterTypes.length > 4) {
+			System.out.println("WARN: fns taking primitives support only 4 or fewer args. The FunctionalInterface '" + type.getName() + "' will be handled by a normal IFn, not by primitive interfaces of IFn");
+			return null;
+		}
+		if(prim)
+			return "clojure.lang.IFn$" + ret;
+		return null;
+	}
+
 	@Override
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen) {
 		Optional<java.lang.reflect.Method> samMethodOpt = Reflector.findSingleAbstractMethod(parameterType);
@@ -1502,23 +1545,63 @@ static class LambdaExpr implements Expr {
 			java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
 			String interfaceMethodName = interfaceMethod.getName();
 
-			MethodType invokedType = MethodType.methodType(parameterType, IFn.class);
-			String callsiteMethodDescriptor = invokedType.toMethodDescriptorString();
-
 			MethodType bootstrapMethodType = MethodType.methodType(CallSite.class, MethodHandles.Lookup.class, String.class, MethodType.class, MethodType.class, MethodHandle.class, MethodType.class);
 			Handle metaFactoryHandle = new Handle(Opcodes.H_INVOKESTATIC, LambdaMetafactory.class.getName().replace('.', '/'), "metafactory", bootstrapMethodType.toMethodDescriptorString(), false);
 
 			Type interfaceMethodType = Type.getType(interfaceMethod);
 
+			Class<?>[] parameterTypes = interfaceMethod.getParameterTypes();
+			String primInterface = maybePrimInterface(parameterType, interfaceMethod);
+
+			Class targetFnInterface = null;
+			String targetFnMethodName = null;
 			int parameterCount = interfaceMethod.getParameterCount();
 			Class[] parameters = new Class[parameterCount];
-			Arrays.fill(parameters, Object.class);
-			Handle implMethodHandle = new Handle(Opcodes.H_INVOKEINTERFACE, IFn.class.getName().replace('.', '/'), "invoke", MethodType.methodType(Object.class, parameters).toMethodDescriptorString(), true);
+			Class targetFnReturnType = Object.class;
+
+			if(primInterface != null) {
+				// Does FnExpr have primitive functions and the signature matches to the signature of interface method?
+				String primSig = primInterface.replace('.', '/');
+				List primitiveSignatures = (fnExpr instanceof FnExpr) ? ((FnExpr)fnExpr).getPrimitiveSignatures() : new ArrayList(0);
+				if(primitiveSignatures.contains(primSig))  {
+					// IFn instance must have a invokePrim that have same signature with interface method.
+					try {
+//						System.out.println("found invokePrim: " + interfaceMethod + ", primSig = " + primSig);
+						targetFnInterface = Class.forName(primInterface);
+						targetFnMethodName = "invokePrim";
+						for(int i = 0; i < parameterCount; i++) {
+							Class parameter = parameterTypes[i];
+							if(parameter == long.class || parameter == double.class) {
+								parameters[i] = parameter;
+							} else {
+								parameters[i] = Object.class;
+							}
+						}
+						Class<?> returnType = interfaceMethod.getReturnType();
+						if(returnType == long.class || returnType == double.class) {
+							targetFnReturnType = returnType;
+						}
+					} catch (ClassNotFoundException e) {
+						throw new CompilerException(source, line, column, null, CompilerException.PHASE_COMPILATION, e);
+					}
+				}
+			}
+
+			if(targetFnInterface == null) {
+				// No invokePrim found. Use IFn.invoke instead.
+				targetFnInterface = IFn.class;
+				targetFnMethodName = "invoke";
+				Arrays.fill(parameters, Object.class);
+			}
+
+			MethodType invokedType = MethodType.methodType(parameterType, targetFnInterface);
+			String callsiteMethodDescriptor = invokedType.toMethodDescriptorString();
+			Handle implMethodHandle = new Handle(Opcodes.H_INVOKEINTERFACE, targetFnInterface.getName().replace('.', '/'), targetFnMethodName, MethodType.methodType(targetFnReturnType, parameters).toMethodDescriptorString(), true);
 
 			// Put the IFn to the top of stack.
 			// It will be used as an argument for a LambdaMetaFactory call.
 			fnExpr.emit(C.EXPRESSION, objx, gen);
-			HostExpr.emitUnboxArg(objx, gen, IFn.class);
+			HostExpr.emitUnboxArg(objx, gen, targetFnInterface);
 
 			// call LambdaMetaFactory with invokeDynamic.
 			// It will generate a functionalInterface object and be put at top of stack.
