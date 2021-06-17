@@ -4007,6 +4007,7 @@ static public class FnExpr extends ObjExpr{
 	//if there is a variadic overload (there can only be one) it is stored here
 	FnMethod variadicMethod = null;
 	IPersistentCollection methods;
+	private List<String> primSigs = new ArrayList();
 	private boolean hasPrimSigs;
 	private boolean hasMeta;
     private boolean hasEnclosingMethod;
@@ -4029,6 +4030,10 @@ static public class FnExpr extends ObjExpr{
         if (jc == null)
             jc = tag != null ? HostExpr.tagToClass(tag) : AFunction.class;
         return jc;
+	}
+
+	public List<String> getPrimitiveSignatures() {
+		return primSigs;
 	}
 
 	protected void emitMethods(ClassVisitor cv){
@@ -4189,6 +4194,7 @@ static public class FnExpr extends ObjExpr{
 			{
 			Var.popThreadBindings();
 			}
+		fn.primSigs.addAll(prims);
 		fn.hasPrimSigs = prims.size() > 0;
 		IPersistentMap fmeta = RT.meta(origForm);
 		if(fmeta != null)
