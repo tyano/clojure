@@ -7,7 +7,7 @@
            [java.util Iterator]
            [java.util.concurrent Callable]
            [java.io StringWriter]
-           [clojure.lang Reflector IFn APersistentMap ISeq ExprAccessor]
+           [clojure.lang Reflector IFn APersistentMap ISeq ExprAccessor Compiler$CompilerException]
            [lambda LambdaTestFns SamInterfaceWithoutAnnotation SamInterfaceWithObjectsMethods 
             NotSamInterfaceWithEquals NotSamInterfaceWithHashcode NotSamInterfaceWithToString]))
 
@@ -36,19 +36,6 @@
            (.. (Stream/of "a")
                (map (generate-upper-case-fn))
                (collect (Collectors/toList))))))
-  
-  (testing "If the passed value is not a fn, a warning message must be printed"
-    (is (= "Yes" (binding [*warn-on-reflection* true]
-                   (LambdaTestFns/test (let [target-str "s"] (fn [value] (starts-with? value target-str))) "start")))#_(re-matches #"Reflection warning.*"
-           (let [writer (StringWriter.)]
-             
-             (.toString writer))))
-
-    #_(is (= ["A"]
-           (.. (Stream/of "a")
-               (map (generate-upper-case-fn))
-               (collect (Collectors/toList))))))
-  
   
   (testing "Generate a FunctionalInterface which have a primitive return type"
     (let [result (.. ["1" "2"]
@@ -121,7 +108,19 @@
                      (map f)
                      (toArray))]
       
-      (is (= "invokePrim" @type-result)))))
+      (is (= "invokePrim" @type-result))))
+  
+  (testing "if a fn expression is placed at FunctionalInterface, Arity-checking must work."
+    (let [ex (try 
+               (eval '(do (import '[java.util.stream Collectors])
+                          (.. [1 2]
+                              (stream)
+                              (map (fn [a b] (+ a b)))
+                              (collect (Collectors/toList)))))
+               (catch Throwable ex ex))]
+      (is (= "clojure.lang.Compiler$CompilerException" (.. ex (getClass) (getName))))
+      (is (= "java.lang.IllegalArgumentException" (.. ex (getCause) (getClass) (getName))))
+      (is (re-matches #"No 1 arity function is found in a supplied fn. Target SAM type =.*" (.getMessage (.getCause ex)))))))
 
 (deftest test-reflector-functions-for-lambda
   (testing "canLambdaConversion"

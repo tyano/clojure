@@ -1582,7 +1582,7 @@ static class LambdaExpr implements Expr {
 				// check the arity of FnExpr
 				FnExpr expr = (FnExpr) fnExpr;
 				if (!expr.hasArity(parameterCount)) {
-					throw new CompilerException(source, line, column, null, CompilerException.PHASE_COMPILATION, new IllegalArgumentException("No " + parameterCount + " arity function is found in fn"));
+					throw new CompilerException(source, line, column, null, CompilerException.PHASE_COMPILATION, new IllegalArgumentException("No " + parameterCount + " arity function is found in a supplied fn. Target SAM type = " + interfaceMethod));
 				}
 			}
 
