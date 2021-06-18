@@ -1449,13 +1449,16 @@ static abstract class MethodExpr extends HostExpr{
 					gen.visitInsn(D2F);
 					}
 
-				// if parameterTypes[i] is a functional interface (SAM object) and the argument (e) is a IFn,
-				// and the IFn object doesn't implements the target parameterType yet,
-				// then emit invokeDynamic to create the SAM object with LambdaMetaFactory.
-				else if(e.hasJavaClass() && Reflector.canLambdaConversion(parameterTypes[i], e.getJavaClass()))
+				// if parameterTypes[i] is a functional interface (SAM object)
+				// the expression might be a target for lambdaConversion.
+				// emit a LambdaExpr. LambdaExpr will check if conversion is needed or not,
+				// and run conversion only when target type and argument is matched for lambda conversion.
+				// otherwise, the original expr will be emitted without any conversion.
+				else if(e.hasJavaClass() && Reflector.isSamType(parameterTypes[i]))
 					{
 					final LambdaExpr lambdaExpr = new LambdaExpr(parameterTypes[i], e);
 					lambdaExpr.emit(C.EXPRESSION, objx, gen);
+					HostExpr.emitUnboxArg(objx, gen, parameterTypes[i]);
 					}
 
 				else
@@ -1480,6 +1483,13 @@ static class LambdaExpr implements Expr {
 	public final Class parameterType;
 	public final Expr fnExpr;
 
+	final static Method tryLamdbaComversionMethod =
+			new Method(
+					"tryLambdaConversion",
+					OBJECT_TYPE,
+					new Type[]{CLASS_TYPE, OBJECT_TYPE, Type.BOOLEAN_TYPE, Type.getType(String.class), Type.INT_TYPE, Type.INT_TYPE});
+
+
 	public LambdaExpr(Class parameterType, Expr fnExpr) {
 		this.source = (String)SOURCE.deref();
 		this.line = lineDeref();
@@ -1490,8 +1500,8 @@ static class LambdaExpr implements Expr {
 
 	@Override
 	public Object eval() {
-		IFn clojureFunction = (IFn)fnExpr.eval();
-		return Reflector.lambdaConversion(parameterType, clojureFunction);
+		Object object = fnExpr.eval();
+		return Reflector.tryLambdaConversion(parameterType, object);
 	}
 
 	static public String classCharAsString(Class c){
@@ -1537,13 +1547,44 @@ static class LambdaExpr implements Expr {
 		return null;
 	}
 
+	private boolean canCallInvokeDynamic() {
+		if(fnExpr.hasJavaClass()) {
+			Class evaluatedClass = fnExpr.getJavaClass();
+			return IFn.class.isAssignableFrom(evaluatedClass) && !parameterType.isAssignableFrom(evaluatedClass);
+		}
+		return false;
+	}
+
+	private boolean isConversionNotRequired() {
+		return fnExpr.hasJavaClass() && parameterType.isAssignableFrom(fnExpr.getJavaClass());
+	}
+
 	@Override
 	public void emit(C context, ObjExpr objx, GeneratorAdapter gen) {
-		Optional<java.lang.reflect.Method> samMethodOpt = Reflector.findSingleAbstractMethod(parameterType);
+		java.lang.reflect.Method interfaceMethod = Reflector.findSingleAbstractMethod(parameterType).orElseThrow(() -> new CompilerException(source, line, column, null, CompilerException.PHASE_COMPILATION, new IllegalArgumentException("No Single Abstract Method is found in the class " + parameterType.getName())));
+		String interfaceMethodName = interfaceMethod.getName();
+		int parameterCount = interfaceMethod.getParameterCount();
 
-		if(samMethodOpt.isPresent()) {
-			java.lang.reflect.Method interfaceMethod = samMethodOpt.get();
-			String interfaceMethodName = interfaceMethod.getName();
+		// If the class of the evaluated value of fnExpr already matches to the target parameter type,
+		// no conversion is required. Just emit the fnExpr.
+		// if the class is determined as a IFn,
+		// we can use invokeDynamic for generating a FunctionalInterface object from the IFn.
+		// Using invokeDynamic is more performative than directly using LambdaMetaFactory,
+		// because LambdaMetaFactory is used as the 'bootstrap' method of invokeDynamic.
+		// If the class is not be able to determine as a IFn, we need runtime checking on the evaluated value.
+		// If the evaluated value is a IFn, call LambdaMetaFactory.metafactory manually.
+		if(isConversionNotRequired()) {
+			fnExpr.emit(C.EXPRESSION, objx, gen);
+			HostExpr.emitUnboxArg(objx, gen, parameterType);
+
+		} else if(canCallInvokeDynamic()) {
+			if(fnExpr instanceof FnExpr) {
+				// check the arity of FnExpr
+				FnExpr expr = (FnExpr) fnExpr;
+				if (!expr.hasArity(parameterCount)) {
+					throw new CompilerException(source, line, column, null, CompilerException.PHASE_COMPILATION, new IllegalArgumentException("No " + parameterCount + " arity function is found in fn"));
+				}
+			}
 
 			MethodType bootstrapMethodType = MethodType.methodType(CallSite.class, MethodHandles.Lookup.class, String.class, MethodType.class, MethodType.class, MethodHandle.class, MethodType.class);
 			Handle metaFactoryHandle = new Handle(Opcodes.H_INVOKESTATIC, LambdaMetafactory.class.getName().replace('.', '/'), "metafactory", bootstrapMethodType.toMethodDescriptorString(), false);
@@ -1555,30 +1596,29 @@ static class LambdaExpr implements Expr {
 
 			Class targetFnInterface = null;
 			String targetFnMethodName = null;
-			int parameterCount = interfaceMethod.getParameterCount();
 			Class[] parameters = new Class[parameterCount];
 			Class targetFnReturnType = Object.class;
 
-			if(primInterface != null) {
+			if (primInterface != null) {
 				// Does FnExpr have primitive functions and the signature matches to the signature of interface method?
 				String primSig = primInterface.replace('.', '/');
-				List primitiveSignatures = (fnExpr instanceof FnExpr) ? ((FnExpr)fnExpr).getPrimitiveSignatures() : new ArrayList(0);
-				if(primitiveSignatures.contains(primSig))  {
-					// IFn instance must have a invokePrim that have same signature with interface method.
+				List primitiveSignatures = (fnExpr instanceof FnExpr) ? ((FnExpr) fnExpr).getPrimitiveSignatures() : new ArrayList(0);
+				if (primitiveSignatures.contains(primSig)) {
+					// IFn instance will have a invokePrim that has same signature with the interface method which we want to call.
 					try {
 //						System.out.println("found invokePrim: " + interfaceMethod + ", primSig = " + primSig);
 						targetFnInterface = Class.forName(primInterface);
 						targetFnMethodName = "invokePrim";
-						for(int i = 0; i < parameterCount; i++) {
+						for (int i = 0; i < parameterCount; i++) {
 							Class parameter = parameterTypes[i];
-							if(parameter == long.class || parameter == double.class) {
+							if (parameter == long.class || parameter == double.class) {
 								parameters[i] = parameter;
 							} else {
 								parameters[i] = Object.class;
 							}
 						}
 						Class returnType = interfaceMethod.getReturnType();
-						if(returnType == long.class || returnType == double.class) {
+						if (returnType == long.class || returnType == double.class) {
 							targetFnReturnType = returnType;
 						}
 					} catch (ClassNotFoundException e) {
@@ -1587,7 +1627,7 @@ static class LambdaExpr implements Expr {
 				}
 			}
 
-			if(targetFnInterface == null) {
+			if (targetFnInterface == null) {
 				// No invokePrim found. Use IFn.invoke instead.
 				targetFnInterface = IFn.class;
 				targetFnMethodName = "invoke";
@@ -1598,13 +1638,13 @@ static class LambdaExpr implements Expr {
 			String callsiteMethodDescriptor = invokedType.toMethodDescriptorString();
 			Handle implMethodHandle = new Handle(Opcodes.H_INVOKEINTERFACE, targetFnInterface.getName().replace('.', '/'), targetFnMethodName, MethodType.methodType(targetFnReturnType, parameters).toMethodDescriptorString(), true);
 
-			// Put the IFn to the top of stack.
-			// It will be used as an argument for a LambdaMetaFactory call.
+			// Put an IFn to the top of stack by evaluating fnExpr
+			// It will be used as an argument for a LambdaMetaFactory.metafactory call.
 			fnExpr.emit(C.EXPRESSION, objx, gen);
 			HostExpr.emitUnboxArg(objx, gen, targetFnInterface);
 
 			// call LambdaMetaFactory with invokeDynamic.
-			// It will generate a functionalInterface object and be put at top of stack.
+			// It will generate a functionalInterface object.
 			gen.visitLineNumber(line, gen.mark());
 			gen.invokeDynamic(
 					interfaceMethodName,
@@ -1615,8 +1655,20 @@ static class LambdaExpr implements Expr {
 					interfaceMethodType);
 			HostExpr.emitUnboxArg(objx, gen, parameterType);
 		} else {
-			// Must not be occurred, because this checking is already done before creating a LambdaExpr.
-			throw new CompilerException(source, line, column, null, CompilerException.PHASE_COMPILATION, new IllegalArgumentException("No Single Abstract Method is found in the class " + parameterType.getName()));
+			// Can not determine that fnExpr will generate a IFn or not.
+			// Reflector.tryLambdaConversion will check if the object generated by the fnExpr is lambdaConvertible.
+			// if yes, object will be converted to a functional interface object with LambdaMetaFactory.
+			// if not, just the object itself will be return.
+
+			gen.push(Type.getType(parameterType));
+			fnExpr.emit(C.EXPRESSION, objx, gen);
+			gen.push(true);
+			gen.push(source);
+			gen.push(line);
+			gen.push(column);
+			gen.visitLineNumber(line, gen.mark());
+			gen.invokeStatic(REFLECTOR_TYPE, tryLamdbaComversionMethod);
+			HostExpr.emitUnboxArg(objx, gen, Object.class);
 		}
 	}
 
@@ -4334,6 +4386,22 @@ static public class FnExpr extends ObjExpr{
 //			}
 //		else
 			emit(C.EXPRESSION,objx,gen);
+	}
+
+	public boolean hasArity(int arity) {
+		for(ISeq s = methods().seq(); s != null; s = s.next()) {
+			FnMethod method = (FnMethod) s.first();
+			if(method.isVariadic()) {
+				if(method.argclasses.length <= arity) {
+					return true;
+				}
+			} else {
+				if(method.argclasses.length == arity) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 }
 

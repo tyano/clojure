@@ -6,9 +6,16 @@
            [java.util.function BiFunction Function Supplier LongUnaryOperator]
            [java.util Iterator]
            [java.util.concurrent Callable]
+           [java.io StringWriter]
            [clojure.lang Reflector IFn APersistentMap ISeq ExprAccessor]
            [lambda LambdaTestFns SamInterfaceWithoutAnnotation SamInterfaceWithObjectsMethods 
             NotSamInterfaceWithEquals NotSamInterfaceWithHashcode NotSamInterfaceWithToString]))
+
+
+
+(defn generate-upper-case-fn
+  []
+  (fn [item] (.toUpperCase item)))
 
 (deftest test-lambda-conversion
   (testing "Calling a static method which have a FunctionalInterface parameter"
@@ -20,6 +27,28 @@
            (.. (Stream/of "a")
                (map (fn [item] (.toUpperCase item)))
                (collect (Collectors/toList))))))
+  
+  (testing "Can use any expression which generate a fn at the place where FunctionalInterface is required."
+    (is (= "Yes"
+           (LambdaTestFns/test (let [target-str "s"] (fn [value] (starts-with? value target-str))) "start")))
+    
+    (is (= ["A"]
+           (.. (Stream/of "a")
+               (map (generate-upper-case-fn))
+               (collect (Collectors/toList))))))
+  
+  (testing "If the passed value is not a fn, a warning message must be printed"
+    (is (= "Yes" (binding [*warn-on-reflection* true]
+                   (LambdaTestFns/test (let [target-str "s"] (fn [value] (starts-with? value target-str))) "start")))#_(re-matches #"Reflection warning.*"
+           (let [writer (StringWriter.)]
+             
+             (.toString writer))))
+
+    #_(is (= ["A"]
+           (.. (Stream/of "a")
+               (map (generate-upper-case-fn))
+               (collect (Collectors/toList))))))
+  
   
   (testing "Generate a FunctionalInterface which have a primitive return type"
     (let [result (.. ["1" "2"]
@@ -71,23 +100,23 @@
       (println (str "time1 = " time1 "ms. time2 = " time2 "ms."))
       (is (< time1 time2))))
 
-  (testing "can convert a fn to a FunctionalInterface by Reflector/lambdaConversion"
-    (is (instance? BiFunction (Reflector/lambdaConversion BiFunction (fn [a b] (+ a b))))))
+  (testing "can convert a fn to a FunctionalInterface by Reflector/tryLambdaConversion"
+    (is (instance? BiFunction (Reflector/tryLambdaConversion BiFunction (fn [a b] (+ a b))))))
   
-  (testing "The functionalInterface made of Reflector/lambdaConversion works well"
-    (let [f      (Reflector/lambdaConversion LongUnaryOperator (fn [value] (* value 2)))
+  (testing "The functionalInterface made of Reflector/tryLambdaConversion works well"
+    (let [f      (Reflector/tryLambdaConversion LongUnaryOperator (fn [value] (* value 2)))
           result (.. (LongStream/of (long-array [1]))
                      (map f)
                      (toArray))]
       (is (= (Class/forName "[J") (class result)))
       (is (= 2 (aget result 0)))))
   
-  (testing "Also Reflector/lambdaConversion use invokePrim instead of invoke if a IFn implements a correct primitive interface"
+  (testing "Also Reflector/tryLambdaConversion use invokePrim instead of invoke if a IFn implements a correct primitive interface"
     (let [type-result (atom nil)
-          f      (Reflector/lambdaConversion LongUnaryOperator (fn ^long [^long value]
-                                                                 (let [stacktrace-element (first (.getStackTrace ^Throwable (ex-info "dummy" {})))]
-                                                                   (reset! type-result (.getMethodName stacktrace-element)))
-                                                                 (* value 2)))
+          f      (Reflector/tryLambdaConversion LongUnaryOperator (fn ^long [^long value]
+                                                                    (let [stacktrace-element (first (.getStackTrace ^Throwable (ex-info "dummy" {})))]
+                                                                      (reset! type-result (.getMethodName stacktrace-element)))
+                                                                    (* value 2)))
           result (.. (LongStream/of (long-array [1]))
                      (map f)
                      (toArray))]

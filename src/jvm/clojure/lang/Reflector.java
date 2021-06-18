@@ -643,7 +643,7 @@ private static Stream<Method> samTargetMethods(Class type) {
 			.filter(m -> !isSameSignatureWithObjectMethods(m));
 }
 
-private static boolean isSamType(Class type) {
+public static boolean isSamType(Class type) {
 	return type != null && type.isInterface() &&
 			(type.isAnnotationPresent(FunctionalInterface.class) || samTargetMethods(type).count() == 1L);
 }
@@ -672,77 +672,92 @@ private static boolean isSameSignatureWithObjectMethods(Method method) {
 	return objectMethods.stream().anyMatch(objectMethod -> isSameSignature(objectMethod, method));
 }
 
-public static Object lambdaConversion(Class functionalInterface, Object fn) {
-	Optional<Method> samMethodOpt = findSingleAbstractMethod(functionalInterface);
+static Object lambdaConversion(Class functionalInterface, Object object) {
+	MethodHandles.Lookup lookup = MethodHandles.lookup();
+	Method interfaceMethod = findSingleAbstractMethod(functionalInterface).orElseThrow(() -> new IllegalStateException("No Single Abstract Method Found."));
+	String interfaceMethodName = interfaceMethod.getName();
 
-	if(samMethodOpt.isPresent()) {
-		MethodHandles.Lookup lookup = MethodHandles.lookup();
+	try {
+		MethodType samMethodType = MethodType.methodType(interfaceMethod.getReturnType(), interfaceMethod.getParameterTypes());
 
-		Method interfaceMethod = samMethodOpt.get();
-		String interfaceMethodName = interfaceMethod.getName();
+		int parameterCount = interfaceMethod.getParameterCount();
 
-		try {
-			MethodType samMethodType = MethodType.methodType(interfaceMethod.getReturnType(), interfaceMethod.getParameterTypes());
+		Class[] parameterTypes = interfaceMethod.getParameterTypes();
+		String primInterface = Compiler.LambdaExpr.maybePrimInterface(functionalInterface, interfaceMethod);
 
-			int parameterCount = interfaceMethod.getParameterCount();
+		Class targetFnInterface = null;
+		String targetFnMethodName = null;
+		Class[] parameters = new Class[parameterCount];
+		Class targetFnReturnType = Object.class;
 
-			Class[] parameterTypes = interfaceMethod.getParameterTypes();
-			String primInterface = Compiler.LambdaExpr.maybePrimInterface(functionalInterface, interfaceMethod);
-
-			Class targetFnInterface = null;
-			String targetFnMethodName = null;
-			Class[] parameters = new Class[parameterCount];
-			Class targetFnReturnType = Object.class;
-
-			if(primInterface != null) {
-				Class primInterfaceClass = Class.forName(primInterface);
-				if(primInterfaceClass.isAssignableFrom(fn.getClass())) {
-					targetFnInterface = primInterfaceClass;
-					targetFnMethodName = "invokePrim";
-					for(int i = 0; i < parameterCount; i++) {
-						Class parameter = parameterTypes[i];
-						if(parameter == long.class || parameter == double.class) {
-							parameters[i] = parameter;
-						} else {
-							parameters[i] = Object.class;
-						}
-					}
-					Class returnType = interfaceMethod.getReturnType();
-					if(returnType == long.class || returnType == double.class) {
-						targetFnReturnType = returnType;
+		if(primInterface != null) {
+			Class primInterfaceClass = Class.forName(primInterface);
+			if(primInterfaceClass.isAssignableFrom(object.getClass())) {
+				targetFnInterface = primInterfaceClass;
+				targetFnMethodName = "invokePrim";
+				for(int i = 0; i < parameterCount; i++) {
+					Class parameter = parameterTypes[i];
+					if(parameter == long.class || parameter == double.class) {
+						parameters[i] = parameter;
+					} else {
+						parameters[i] = Object.class;
 					}
 				}
+				Class returnType = interfaceMethod.getReturnType();
+				if(returnType == long.class || returnType == double.class) {
+					targetFnReturnType = returnType;
+				}
 			}
-
-			if(targetFnInterface == null) {
-				// No invokePrim found. Use IFn.invoke instead.
-				targetFnInterface = IFn.class;
-				targetFnMethodName = "invoke";
-				Arrays.fill(parameters, Object.class);
-			}
-
-			MethodType invokedType = MethodType.methodType(functionalInterface, targetFnInterface);
-			MethodHandle implMethod = lookup.findVirtual(targetFnInterface, targetFnMethodName, MethodType.methodType(targetFnReturnType, parameters));
-
-			CallSite callSite = LambdaMetafactory.metafactory(
-					lookup,
-					interfaceMethodName,
-					invokedType,
-					samMethodType,
-					implMethod,
-					samMethodType);
-
-			MethodHandle target = callSite.getTarget().bindTo(targetFnInterface.cast(fn));
-			return functionalInterface.cast(target.invoke());
-		} catch (Throwable e) {
-			if(!(e instanceof Compiler.CompilerException))
-				throw new Compiler.CompilerException("", 0, 0, null, Compiler.CompilerException.PHASE_EXECUTION, e);
-			else
-				throw (Compiler.CompilerException) e;
 		}
-	} else {
-		return fn;
+
+		if(targetFnInterface == null) {
+			// No invokePrim found. Use IFn.invoke instead.
+			targetFnInterface = IFn.class;
+			targetFnMethodName = "invoke";
+			Arrays.fill(parameters, Object.class);
+		}
+
+		MethodType invokedType = MethodType.methodType(functionalInterface, targetFnInterface);
+		MethodHandle implMethod = lookup.findVirtual(targetFnInterface, targetFnMethodName, MethodType.methodType(targetFnReturnType, parameters));
+
+		CallSite callSite = LambdaMetafactory.metafactory(
+				lookup,
+				interfaceMethodName,
+				invokedType,
+				samMethodType,
+				implMethod,
+				samMethodType);
+
+		MethodHandle target = callSite.getTarget().bindTo(targetFnInterface.cast(object));
+		return functionalInterface.cast(target.invoke());
+	} catch (Throwable e) {
+		if(!(e instanceof Compiler.CompilerException))
+			throw new Compiler.CompilerException("", 0, 0, null, Compiler.CompilerException.PHASE_EXECUTION, e);
+		else
+			throw (Compiler.CompilerException) e;
 	}
+}
+
+public static Object tryLambdaConversion(Class functionalInterface, Object object, boolean runtimeWarning, String source, int line, int column) {
+	// Run lambdaConversion only when parameters are convertible for the conversion.
+	// If not, just return a supplied object
+	Class argType = (object == null) ? null : object.getClass();
+	if(canLambdaConversion(functionalInterface, argType)) {
+		if(runtimeWarning && RT.booleanCast(RT.WARN_ON_REFLECTION.deref())) {
+			RT.errPrintWriter()
+					.format("Reflection warning, %s:%d:%d - Runtime lambda factory creation. You can remove this message by tagging the expression which returns a fn as clojure.lang.IFn.\n",
+							source,
+							line,
+							column);
+		}
+		return lambdaConversion(functionalInterface, object);
+	} else {
+		return object;
+	}
+}
+
+public static Object tryLambdaConversion(Class functionalInterface, Object object) {
+	return tryLambdaConversion(functionalInterface, object, false, null, 0, 0);
 }
 
 public static Object[] convertArgs(Class[] parameterTypes, Object[] args) {
@@ -751,14 +766,7 @@ public static Object[] convertArgs(Class[] parameterTypes, Object[] args) {
 		for(int i = 0; i < parameterTypes.length; i++) {
 			Object arg = args[i];
 			Class paramType = parameterTypes[i];
-
-			Class argType = (arg == null) ? null : arg.getClass();
-			if(canLambdaConversion(paramType, argType)) {
-				ret[i] = lambdaConversion(paramType, arg);
-//				System.out.println("conversion: param = " + paramType + ", arg = " + (argType == null ? "null" : argType.getName()) + ", converted = " + ret[i]);
-			} else {
-				ret[i] = arg;
-			}
+			ret[i] = tryLambdaConversion(paramType, arg);
 		}
 		return ret;
 	} else {
