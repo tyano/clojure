@@ -1454,7 +1454,7 @@ static abstract class MethodExpr extends HostExpr{
 				// emit a LambdaExpr. LambdaExpr will check if conversion is needed or not,
 				// and run conversion only when target type and argument is matched for lambda conversion.
 				// otherwise, the original expr will be emitted without any conversion.
-				else if(e.hasJavaClass() && Reflector.isSamType(parameterTypes[i]))
+				else if(Reflector.isSamType(parameterTypes[i]))
 					{
 					final LambdaExpr lambdaExpr = new LambdaExpr(parameterTypes[i], e);
 					lambdaExpr.emit(C.EXPRESSION, objx, gen);
@@ -1574,10 +1574,12 @@ static class LambdaExpr implements Expr {
 		// If the class is not be able to determine as a IFn, we need runtime checking on the evaluated value.
 		// If the evaluated value is a IFn, call LambdaMetaFactory.metafactory manually.
 		if(isConversionNotRequired()) {
+//			System.out.println("notRequired: " + parameterType.getName() + ", form = " + fnExpr);
 			fnExpr.emit(C.EXPRESSION, objx, gen);
 			HostExpr.emitUnboxArg(objx, gen, parameterType);
 
 		} else if(canCallInvokeDynamic()) {
+//			System.out.println("Can call: " + parameterType.getName() + ", form = " + fnExpr);
 			if(fnExpr instanceof FnExpr) {
 				// check the arity of FnExpr
 				FnExpr expr = (FnExpr) fnExpr;
@@ -1660,6 +1662,7 @@ static class LambdaExpr implements Expr {
 			// if yes, object will be converted to a functional interface object with LambdaMetaFactory.
 			// if not, just the object itself will be return.
 
+//			System.out.println("runtime conversion: " + parameterType.getName() + ", src = " + fnExpr);
 			gen.push(Type.getType(parameterType));
 			fnExpr.emit(C.EXPRESSION, objx, gen);
 			gen.push(true);

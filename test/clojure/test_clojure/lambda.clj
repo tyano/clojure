@@ -6,8 +6,7 @@
            [java.util.function BiFunction Function Supplier LongUnaryOperator]
            [java.util Iterator]
            [java.util.concurrent Callable]
-           [java.io StringWriter]
-           [clojure.lang Reflector IFn APersistentMap ISeq ExprAccessor Compiler$CompilerException]
+           [clojure.lang Reflector IFn APersistentMap ISeq ExprAccessor]
            [lambda LambdaTestFns SamInterfaceWithoutAnnotation SamInterfaceWithObjectsMethods 
             NotSamInterfaceWithEquals NotSamInterfaceWithHashcode NotSamInterfaceWithToString]))
 
@@ -109,10 +108,25 @@
                      (toArray))]
       
       (is (= "invokePrim" @type-result))))
-  
+
+  ;; (testing "Reflection warning will be printed when compiler can not recognize the type of expression is IFn"
+  ;;   (let [expr   '(do
+  ;;                  (import [java.util.stream Collectors])
+  ;;                  (import [java.io StringWriter])
+  ;;                  (let [writer (new java.io.StringWriter)]
+  ;;                    (binding [*err* writer
+  ;;                              *warn-on-reflection* true]
+  ;;                      (.. [1 2]
+  ;;                          (stream)
+  ;;                          (map (let [m 2] (fn [value] (* value m))))
+  ;;                          (collect (Collectors/toList))))
+  ;;                    (str writer)))]
+  ;;     (is (= "Reflection"
+  ;;            (binding [*warn-on-reflection* true] (eval expr))))))
+
   (testing "if a fn expression is placed at FunctionalInterface, Arity-checking must work."
     (let [ex (try 
-               (eval '(do (import '[java.util.stream Collectors])
+               (eval '(do (import [java.util.stream Collectors])
                           (.. [1 2]
                               (stream)
                               (map (fn [a b] (+ a b)))
