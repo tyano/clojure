@@ -745,7 +745,7 @@ public static Object tryLambdaConversion(Class functionalInterface, Object objec
 	if(canLambdaConversion(functionalInterface, argType)) {
 		if(runtimeWarning && RT.booleanCast(RT.WARN_ON_REFLECTION.deref())) {
 			RT.errPrintWriter()
-					.format("Reflection warning, %s:%d:%d - Runtime lambda factory creation. You can remove this message by tagging the expression which returns a fn as clojure.lang.IFn. Target interface = %s\n",
+					.format("Runtime LambdaMetaFactory call warning, %s:%d:%d - Runtime lambda factory creation. You can remove this message by tagging the expression which returns a fn as clojure.lang.IFn. Target interface = %s\n",
 							source,
 							line,
 							column,
