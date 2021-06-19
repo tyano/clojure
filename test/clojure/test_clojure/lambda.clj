@@ -16,6 +16,12 @@
   []
   (fn [item] (.toUpperCase item)))
 
+(def numberRef (atom 2))
+
+(defn doubler
+  [v]
+  (* 2 v))
+
 (deftest test-lambda-conversion
   (testing "Calling a static method which have a FunctionalInterface parameter"
     (is (= "Yes" 
@@ -30,7 +36,19 @@
   (testing "Can use any expression which generate a fn at the place where FunctionalInterface is required."
     (is (= "Yes"
            (LambdaTestFns/test (let [target-str "s"] (fn [value] (starts-with? value target-str))) "start")))
-    
+
+    (is (= [2 4 6]
+           (.. [1 2 3]
+               (stream)
+               (map (let [number @numberRef] #(* number %)))
+               (collect (Collectors/toList)))))
+
+    (is (= [2 4 6]
+           (.. [1 2 3]
+               (stream)
+               (map doubler)
+               (collect (Collectors/toList)))))
+
     (is (= ["A"]
            (.. (Stream/of "a")
                (map (generate-upper-case-fn))

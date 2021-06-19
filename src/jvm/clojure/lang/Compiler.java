@@ -1569,7 +1569,7 @@ static class LambdaExpr implements Expr {
 		// no conversion is required. Just emit the fnExpr.
 		// if the class is determined as a IFn,
 		// we can use invokeDynamic for generating a FunctionalInterface object from the IFn.
-		// Using invokeDynamic is more performative than directly using LambdaMetaFactory,
+		// Using invokeDynamic is faster than directly using LambdaMetaFactory,
 		// because LambdaMetaFactory is used as the 'bootstrap' method of invokeDynamic.
 		// If the class is not be able to determine as a IFn, we need runtime checking on the evaluated value.
 		// If the evaluated value is a IFn, call LambdaMetaFactory.metafactory manually.
